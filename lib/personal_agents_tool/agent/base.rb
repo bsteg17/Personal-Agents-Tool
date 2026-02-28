@@ -31,13 +31,13 @@ module PersonalAgentsTool
           @output_schema
         end
 
-        sig { params(name: Symbol, tool_class: T.untyped).void }
+        sig { params(name: Symbol, tool_class: T.class_of(Tool::Base)).void }
         def tool(name, tool_class)
-          @tools ||= T.let({}, T.nilable(T::Hash[Symbol, T.untyped]))
+          @tools ||= T.let({}, T.nilable(T::Hash[Symbol, T.class_of(Tool::Base)]))
           @tools[name] = tool_class
         end
 
-        sig { returns(T::Hash[Symbol, T.untyped]) }
+        sig { returns(T::Hash[Symbol, T.class_of(Tool::Base)]) }
         def tools
           @tools || {}
         end
@@ -59,15 +59,15 @@ module PersonalAgentsTool
         end
       end
 
-      sig { params(llm: T.untyped).void }
+      sig { params(llm: T.nilable(LLM::Client)).void }
       def initialize(llm: nil)
-        @llm = T.let(llm, T.untyped)
+        @llm = T.let(llm, T.nilable(LLM::Client))
       end
 
-      sig { returns(T.untyped) }
+      sig { returns(T.nilable(LLM::Client)) }
       attr_reader :llm
 
-      sig { params(input_data: T.untyped).returns(Result) }
+      sig { params(input_data: T::Struct).returns(Result) }
       def execute(input_data)
         input_schema = self.class.input_schema
         output_schema = self.class.output_schema
@@ -96,7 +96,7 @@ module PersonalAgentsTool
         )
       end
 
-      sig { params(_input: T.untyped).returns(T.untyped) }
+      sig { params(_input: T::Struct).returns(T::Struct) }
       def call(_input)
         raise NotImplementedError, "#{self.class} must implement #call"
       end

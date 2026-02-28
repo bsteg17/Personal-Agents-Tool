@@ -13,7 +13,7 @@ module PersonalAgentsTool
           override.params(
             messages: T::Array[T::Hash[Symbol, String]],
             model: String,
-            tools: T.nilable(T::Hash[Symbol, T.untyped])
+            tools: T.nilable(T::Hash[Symbol, T.class_of(Tool::Base)])
           ).returns(PersonalAgentsTool::LLM::Response)
         end
         def chat(messages:, model:, tools: nil)

@@ -7,7 +7,10 @@ class LLMTestOutput < T::Struct
   const :body, String
 end
 
-class LLMTestTool
+class LLMTestTool < PersonalAgentsTool::Tool::Base
+  extend T::Sig
+
+  sig { override.params(args: T.untyped).returns(String) }
   def self.execute(args)
     "result for #{args}"
   end
@@ -169,7 +172,7 @@ RSpec.describe "LLM Client" do
       stub_provider(client) do
         call_count += 1
         if call_count == 1
-          response(content: nil, tool_calls: [{ name: :search, arguments: "Ruby" }])
+          response(content: nil, tool_calls: [PersonalAgentsTool::LLM::ToolCall.new(name: :search, arguments: "Ruby")])
         else
           response(content: "Found: result for Ruby")
         end
@@ -185,7 +188,7 @@ RSpec.describe "LLM Client" do
       stub_provider(client) do |messages:, **_|
         call_count += 1
         if call_count == 1
-          response(content: nil, tool_calls: [{ name: :search, arguments: "test" }])
+          response(content: nil, tool_calls: [PersonalAgentsTool::LLM::ToolCall.new(name: :search, arguments: "test")])
         else
           tool_message = messages.find { |m| m[:role] == "tool" }
           response(content: "Got tool result: #{tool_message&.dig(:content)}")
@@ -203,9 +206,9 @@ RSpec.describe "LLM Client" do
         call_count += 1
         case call_count
         when 1
-          response(content: nil, tool_calls: [{ name: :search, arguments: "first" }])
+          response(content: nil, tool_calls: [PersonalAgentsTool::LLM::ToolCall.new(name: :search, arguments: "first")])
         when 2
-          response(content: nil, tool_calls: [{ name: :search, arguments: "second" }])
+          response(content: nil, tool_calls: [PersonalAgentsTool::LLM::ToolCall.new(name: :search, arguments: "second")])
         else
           response(content: "All done after 2 tool calls")
         end

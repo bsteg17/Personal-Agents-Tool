@@ -45,8 +45,8 @@ module PersonalAgentsTool
           prompt: String,
           schema: T.nilable(T.class_of(T::Struct)),
           system: T.nilable(String),
-          tools: T.nilable(T::Hash[Symbol, T.untyped])
-        ).returns(T.untyped)
+          tools: T.nilable(T::Hash[Symbol, T.class_of(Tool::Base)])
+        ).returns(T.any(String, T::Struct))
       end
       def chat(prompt:, schema: nil, system: nil, tools: nil)
         messages = T.let([], T::Array[T::Hash[Symbol, String]])
@@ -68,7 +68,7 @@ module PersonalAgentsTool
       sig do
         params(
           messages: T::Array[T::Hash[Symbol, String]],
-          tools: T::Hash[Symbol, T.untyped]
+          tools: T::Hash[Symbol, T.class_of(Tool::Base)]
         ).returns(String)
       end
       def chat_with_tools(messages:, tools:)
@@ -82,10 +82,8 @@ module PersonalAgentsTool
           messages << { role: "assistant", content: response.content || "" }
 
           response.tool_calls.each do |tool_call|
-            tool_name = T.cast(tool_call[:name], Symbol)
-            tool_args = tool_call[:arguments]
-            tool_class = tools[tool_name]
-            result = tool_class.execute(tool_args)
+            tool_class = tools[tool_call.name]
+            result = T.must(tool_class).execute(tool_call.arguments)
             messages << { role: "tool", content: result.to_s }
           end
         end
@@ -95,7 +93,7 @@ module PersonalAgentsTool
         params(
           messages: T::Array[T::Hash[Symbol, String]],
           schema: T.class_of(T::Struct),
-          tools: T.nilable(T::Hash[Symbol, T.untyped])
+          tools: T.nilable(T::Hash[Symbol, T.class_of(Tool::Base)])
         ).returns(T::Struct)
       end
       def chat_with_schema(messages:, schema:, tools: nil)

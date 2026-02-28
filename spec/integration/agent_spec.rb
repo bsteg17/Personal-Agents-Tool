@@ -39,7 +39,10 @@ class BadOutputAgent < PersonalAgentsTool::Agent::Base
   end
 end
 
-class FakeTool
+class FakeTool < PersonalAgentsTool::Tool::Base
+  extend T::Sig
+
+  sig { override.params(args: T.untyped).returns(String) }
   def self.execute(args)
     "tool result for #{args}"
   end
@@ -63,8 +66,8 @@ class LLMTestAgent < PersonalAgentsTool::Agent::Base
   provider "anthropic"
 
   def call(input)
-    response = llm.chat(prompt: "Write about #{input.topic}", schema: TestOutput)
-    response
+    response = T.must(llm).chat(prompt: "Write about #{input.topic}", schema: TestOutput)
+    T.cast(response, TestOutput)
   end
 end
 
@@ -74,13 +77,29 @@ class MultiTurnToolAgent < PersonalAgentsTool::Agent::Base
   tool :search, FakeTool
 
   def call(input)
-    first = llm.chat(prompt: "Search for #{input.topic}", tools: self.class.tools)
+    first = T.must(llm).chat(prompt: "Search for #{input.topic}", tools: self.class.tools)
     tool_result = self.class.tools[:search].execute(first)
-    llm.chat(prompt: "Summarize: #{tool_result}", schema: TestOutput)
+    T.cast(T.must(llm).chat(prompt: "Summarize: #{tool_result}", schema: TestOutput), TestOutput)
   end
 end
 
 RSpec.describe "Agent" do
+  # Helper to create a real LLM::Client with a stubbed provider, matching
+  # the pattern used in llm_client_spec.rb.
+  def new_llm_client
+    client = PersonalAgentsTool::LLM::Client.new(provider: "claude", model: "claude-sonnet-4-20250514")
+    allow(client.provider).to receive(:chat)
+    client
+  end
+
+  def stub_llm_chat(client, &block)
+    allow(client).to receive(:chat, &block)
+  end
+
+  def response(content: nil, tool_calls: [])
+    PersonalAgentsTool::LLM::Response.new(content: content, tool_calls: tool_calls)
+  end
+
   describe "definition" do
     it "defines an agent class with typed input and output schemas" do
       expect(TestAgent.input_schema).to eq(TestInput)
@@ -107,8 +126,9 @@ RSpec.describe "Agent" do
   describe "execution" do
     it "validates input against the declared input schema before calling" do
       agent = TestAgent.new
+      # Sorbet runtime enforces T::Struct type at the sig boundary, raising TypeError
       expect { agent.execute("not a struct") }
-        .to raise_error(PersonalAgentsTool::Agent::InvalidInputError, /Expected TestInput/)
+        .to raise_error(TypeError, /Expected type T::Struct/)
     end
 
     it "validates output against the declared output schema after calling" do
@@ -123,16 +143,17 @@ RSpec.describe "Agent" do
 
       expect(result).to be_a(PersonalAgentsTool::Agent::Result)
       expect(result.output).to be_a(TestOutput)
-      expect(result.output.title).to eq("About Ruby")
-      expect(result.output.body).to eq("A post about Ruby.")
+      expect(T.cast(result.output, TestOutput).title).to eq("About Ruby")
+      expect(T.cast(result.output, TestOutput).body).to eq("A post about Ruby.")
       expect(result.agent_class).to eq(TestAgent)
       expect(result.duration).to be_a(Float)
     end
 
     it "raises a schema validation error on invalid input" do
       agent = TestAgent.new
+      # Sorbet runtime enforces T::Struct type at the sig boundary
       expect { agent.execute(42) }
-        .to raise_error(PersonalAgentsTool::Agent::InvalidInputError)
+        .to raise_error(TypeError, /Expected type T::Struct/)
     end
 
     it "raises a schema validation error on invalid output" do
@@ -143,29 +164,29 @@ RSpec.describe "Agent" do
   end
 
   describe "LLM agents" do
-    let(:mock_llm) { instance_double(PersonalAgentsTool::LLM::Client) }
+    let(:llm_client) { new_llm_client }
 
     it "provides an llm client to agents that need one" do
-      agent = LLMTestAgent.new(llm: mock_llm)
-      expect(agent.llm).to eq(mock_llm)
+      agent = LLMTestAgent.new(llm: llm_client)
+      expect(agent.llm).to eq(llm_client)
     end
 
     it "calls the LLM and parses structured output into the output schema" do
-      agent = LLMTestAgent.new(llm: mock_llm)
+      agent = LLMTestAgent.new(llm: llm_client)
       expected_output = TestOutput.new(title: "AI Title", body: "AI Body")
-      allow(mock_llm).to receive(:chat).and_return(expected_output)
+      stub_llm_chat(llm_client) { expected_output }
 
       result = agent.execute(TestInput.new(topic: "AI"))
 
-      expect(mock_llm).to have_received(:chat).with(prompt: "Write about AI", schema: TestOutput)
+      expect(llm_client).to have_received(:chat).with(prompt: "Write about AI", schema: TestOutput)
       expect(result.output).to eq(expected_output)
     end
 
     it "retries the LLM call when structured output fails to parse" do
-      agent = LLMTestAgent.new(llm: mock_llm)
+      agent = LLMTestAgent.new(llm: llm_client)
       expected_output = TestOutput.new(title: "Retry Title", body: "Retry Body")
       call_count = 0
-      allow(mock_llm).to receive(:chat) do
+      stub_llm_chat(llm_client) do
         call_count += 1
         if call_count < 3
           raise "Parse error"
@@ -192,13 +213,13 @@ RSpec.describe "Agent" do
       agent = TestAgent.new
       result = agent.execute(TestInput.new(topic: "no LLM"))
 
-      expect(result.output.title).to eq("About no LLM")
+      expect(T.cast(result.output, TestOutput).title).to eq("About no LLM")
       expect(agent.llm).to be_nil
     end
 
     it "uses the same input/output contract as LLM agents" do
       pure_agent = TestAgent.new
-      llm_agent = LLMTestAgent.new(llm: instance_double(PersonalAgentsTool::LLM::Client))
+      llm_agent = LLMTestAgent.new(llm: new_llm_client)
 
       # Both use the same input/output type contract
       expect(pure_agent.class.input_schema).to eq(TestInput)
@@ -213,27 +234,27 @@ RSpec.describe "Agent" do
       agent = ToolUsingAgent.new
       result = agent.execute(TestInput.new(topic: "Ruby"))
 
-      expect(result.output.title).to eq("Tool result")
-      expect(result.output.body).to eq("tool result for Ruby")
+      expect(T.cast(result.output, TestOutput).title).to eq("Tool result")
+      expect(T.cast(result.output, TestOutput).body).to eq("tool result for Ruby")
     end
 
     it "supports multi-turn LLM conversations with tool use" do
-      mock_llm = instance_double(PersonalAgentsTool::LLM::Client)
-      agent = MultiTurnToolAgent.new(llm: mock_llm)
+      llm_client = new_llm_client
 
-      allow(mock_llm).to receive(:chat)
+      allow(llm_client).to receive(:chat)
         .with(prompt: "Search for AI", tools: MultiTurnToolAgent.tools)
         .and_return("AI")
 
       final_output = TestOutput.new(title: "Summary", body: "Summary of tool result for AI")
-      allow(mock_llm).to receive(:chat)
+      allow(llm_client).to receive(:chat)
         .with(prompt: "Summarize: tool result for AI", schema: TestOutput)
         .and_return(final_output)
 
+      agent = MultiTurnToolAgent.new(llm: llm_client)
       result = agent.execute(TestInput.new(topic: "AI"))
 
       expect(result.output).to eq(final_output)
-      expect(mock_llm).to have_received(:chat).twice
+      expect(llm_client).to have_received(:chat).twice
     end
   end
 end

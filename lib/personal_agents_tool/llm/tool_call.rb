@@ -5,9 +5,9 @@ require "sorbet-runtime"
 
 module PersonalAgentsTool
   module LLM
-    class Response < T::Struct
-      const :content, T.nilable(String)
-      const :tool_calls, T::Array[ToolCall], default: []
+    class ToolCall < T::Struct
+      const :name, Symbol
+      const :arguments, T.untyped
     end
   end
 end
